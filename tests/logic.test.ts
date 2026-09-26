@@ -80,3 +80,25 @@ test('normalizar datos de Excel', () => {
   assert.equal(normalizarNumero(250), 250);
   assert.equal(normalizarNumero(''), null);
 });
+
+import { ligarPagosRealizados } from '../lib/logic.ts';
+
+test('ligar pagos realizados con sus compromisos', () => {
+  const c = (l: string, f: string, v: number) =>
+    ({ numero_lote: l, fecha_programada: f, valor_programado: v, fecha_real: null, valor_real: null });
+  const r = (l: string, f: string, v: number | null, fr: string, vr: number) =>
+    ({ numero_lote: l, fecha_programada: f, valor_programado: v, fecha_real: fr, valor_real: vr });
+  const res = ligarPagosRealizados(
+    [c('1', '2026-01-15', 100), c('1', '2026-02-15', 200), c('2', '2026-01-15', 300), c('2', '2026-01-15', 400)],
+    [
+      r('1', '2026-02-15', 200, '2026-02-20', 150),
+      r('2', '2026-01-15', 400, '2026-01-10', 400), // dos con la misma fecha: elige por valor
+      r('3', '2026-01-15', 100, '2026-01-15', 100), // lote sin compromiso
+      r('1', '2026-03-15', null, '2026-03-15', 50), // fecha que no existe
+    ],
+  );
+  assert.equal(res.ligados, 2);
+  assert.equal(res.sinCompromiso, 2);
+  assert.deepEqual(res.pagos.map((p) => p.valor_real), [null, 150, null, 400]);
+  assert.equal(res.pagos[1].fecha_real, '2026-02-20');
+});

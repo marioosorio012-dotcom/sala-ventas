@@ -1,9 +1,11 @@
 'use client';
 import type { Compromiso, InfoPropietario, Lote } from './logic';
-import { estadoPago, normalizarFecha, normalizarNumero } from './logic';
+import { estadoPago, ligarPagosRealizados, normalizarFecha, normalizarNumero } from './logic';
 
 const FMT_PESOS = '"$"#,##0';
 const FMT_FECHA = 'dd/mm/yyyy';
+export const HOJA_COMPROMISOS = 'Compromisos de pago';
+export const HOJA_REALIZADOS = 'Pagos realizados';
 
 function aFechaExcel(s: string | null): Date | null {
   if (!s) return null;
@@ -33,36 +35,53 @@ export async function exportarExcel(lotes: Lote[], infos: InfoPropietario[], pag
     });
   }
 
-  const hPagos = wb.addWorksheet('Pagos');
-  hPagos.columns = [
+  const nombreLote = new Map(lotes.map((l) => [l.id, l.numero_lote]));
+  const filas = pagos
+    .map((p) => ({ lote: nombreLote.get(p.lote_id) ?? '', p }))
+    .sort((a, b) =>
+      a.lote.localeCompare(b.lote, 'es', { numeric: true }) ||
+      a.p.fecha_programada.localeCompare(b.p.fecha_programada));
+
+  // Hoja 2: todos los compromisos (lo que se debe pagar)
+  const hCompromisos = wb.addWorksheet(HOJA_COMPROMISOS);
+  hCompromisos.columns = [
     { header: 'Número de lote', key: 'lote', width: 16 },
     { header: 'Fecha programada', key: 'fp', width: 17, style: { numFmt: FMT_FECHA } },
     { header: 'Valor programado', key: 'vp', width: 18, style: { numFmt: FMT_PESOS } },
-    { header: 'Fecha real', key: 'fr', width: 14, style: { numFmt: FMT_FECHA } },
-    { header: 'Valor real', key: 'vr', width: 18, style: { numFmt: FMT_PESOS } },
     { header: 'Estado', key: 'estado', width: 20 },
   ];
-  const nombreLote = new Map(lotes.map((l) => [l.id, l.numero_lote]));
-  const filas = pagos
-    .map((p) => ({
-      lote: nombreLote.get(p.lote_id) ?? '',
-      fp: p.fecha_programada,
-      p,
-    }))
-    .sort((a, b) =>
-      a.lote.localeCompare(b.lote, 'es', { numeric: true }) || a.fp.localeCompare(b.fp));
   for (const { lote, p } of filas) {
-    hPagos.addRow({
+    hCompromisos.addRow({
       lote,
       fp: aFechaExcel(p.fecha_programada),
       vp: Number(p.valor_programado) || 0,
-      fr: aFechaExcel(p.fecha_real),
-      vr: p.fecha_real ? Number(p.valor_real) || 0 : null,
       estado: estadoPago(p).label,
     });
   }
 
-  for (const h of [hLotes, hPagos]) {
+  // Hoja 3: solo los pagos que ya se hicieron, ligados a su compromiso
+  const hRealizados = wb.addWorksheet(HOJA_REALIZADOS);
+  hRealizados.columns = [
+    { header: 'Número de lote', key: 'lote', width: 16 },
+    { header: 'Fecha programada', key: 'fp', width: 17, style: { numFmt: FMT_FECHA } },
+    { header: 'Valor programado', key: 'vp', width: 18, style: { numFmt: FMT_PESOS } },
+    { header: 'Fecha de pago', key: 'fr', width: 15, style: { numFmt: FMT_FECHA } },
+    { header: 'Valor pagado', key: 'vr', width: 18, style: { numFmt: FMT_PESOS } },
+    { header: 'Estado', key: 'estado', width: 20 },
+  ];
+  for (const { lote, p } of filas) {
+    if (!p.fecha_real) continue;
+    hRealizados.addRow({
+      lote,
+      fp: aFechaExcel(p.fecha_programada),
+      vp: Number(p.valor_programado) || 0,
+      fr: aFechaExcel(p.fecha_real),
+      vr: Number(p.valor_real) || 0,
+      estado: estadoPago(p).label,
+    });
+  }
+
+  for (const h of [hLotes, hCompromisos, hRealizados]) {
     h.getRow(1).font = { bold: true };
     h.views = [{ state: 'frozen', ySplit: 1 }];
   }
@@ -131,13 +150,21 @@ function hojaAObjetos(ws: import('exceljs').Worksheet): Record<string, unknown>[
 
 const txt = (v: unknown) => (v === null || v === undefined ? '' : String(v).trim());
 
-export async function leerExcel(file: File): Promise<{ lotes: FilaLoteImport[]; pagos: FilaPagoImport[] }> {
+export type ResultadoLectura = {
+  lotes: FilaLoteImport[];
+  pagos: FilaPagoImport[];
+  /** pagos realizados que no se pudieron ligar a ningún compromiso */
+  realizadosSinCompromiso: number;
+  /** cuántos compromisos quedaron con pago realizado */
+  realizadosLigados: number;
+};
+
+export async function leerExcel(file: File): Promise<ResultadoLectura> {
   const ExcelJS = (await import('exceljs')).default;
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.load(await file.arrayBuffer());
   const hLotes = wb.getWorksheet('Lotes');
   if (!hLotes) throw new Error('El archivo no tiene una hoja llamada "Lotes"');
-  const hPagos = wb.getWorksheet('Pagos');
 
   const lotes = hojaAObjetos(hLotes)
     .map((r) => ({
@@ -148,7 +175,37 @@ export async function leerExcel(file: File): Promise<{ lotes: FilaLoteImport[]; 
     }))
     .filter((r) => r.numero_lote);
 
-  const pagos = (hPagos ? hojaAObjetos(hPagos) : [])
+  const hCompromisos = wb.getWorksheet(HOJA_COMPROMISOS);
+  const hRealizados = wb.getWorksheet(HOJA_REALIZADOS);
+  const hPagosAntigua = wb.getWorksheet('Pagos'); // formato anterior (una sola hoja)
+
+  if (hCompromisos) {
+    const compromisos = hojaAObjetos(hCompromisos)
+      .map((r) => ({
+        numero_lote: txt(r['Número de lote']),
+        fecha_programada: normalizarFecha(r['Fecha programada']),
+        valor_programado: normalizarNumero(r['Valor programado']),
+        fecha_real: null,
+        valor_real: null,
+      }))
+      .filter((r) => r.numero_lote && r.fecha_programada && r.valor_programado !== null);
+
+    const realizados = (hRealizados ? hojaAObjetos(hRealizados) : [])
+      .map((r) => ({
+        numero_lote: txt(r['Número de lote']),
+        fecha_programada: normalizarFecha(r['Fecha programada']),
+        valor_programado: normalizarNumero(r['Valor programado']),
+        fecha_real: normalizarFecha(r['Fecha de pago']),
+        valor_real: normalizarNumero(r['Valor pagado']),
+      }))
+      .filter((r) => r.numero_lote && r.fecha_real && r.valor_real !== null);
+
+    const { pagos, sinCompromiso, ligados } = ligarPagosRealizados(compromisos, realizados);
+    return { lotes, pagos, realizadosSinCompromiso: sinCompromiso, realizadosLigados: ligados };
+  }
+
+  // Compatibilidad con archivos exportados antes del cambio (hoja única "Pagos")
+  const pagos = (hPagosAntigua ? hojaAObjetos(hPagosAntigua) : [])
     .map((r) => ({
       numero_lote: txt(r['Número de lote']),
       fecha_programada: normalizarFecha(r['Fecha programada']),
@@ -157,6 +214,10 @@ export async function leerExcel(file: File): Promise<{ lotes: FilaLoteImport[]; 
       valor_real: normalizarNumero(r['Valor real']),
     }))
     .filter((r) => r.numero_lote && r.fecha_programada && r.valor_programado !== null);
-
-  return { lotes, pagos };
+  return {
+    lotes,
+    pagos,
+    realizadosSinCompromiso: 0,
+    realizadosLigados: pagos.filter((p) => p.fecha_real).length,
+  };
 }

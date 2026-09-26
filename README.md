@@ -56,7 +56,7 @@ npm test                     # pruebas de las reglas de negocio
 |---|---|
 | `supabase/schema.sql` | Tablas, roles, reglas de seguridad y funciones de importar/reemplazar plan |
 | `lib/logic.ts` | Reglas de negocio: estado de cada pago, resumen general, generación del plan |
-| `lib/excel.ts` | Exportar / importar Excel (hojas "Lotes" y "Pagos") |
+| `lib/excel.ts` | Exportar / importar Excel (hojas "Lotes", "Compromisos de pago" y "Pagos realizados"; también acepta archivos viejos con hoja "Pagos") |
 | `components/Plataforma.tsx` | Pantalla principal (resumen + tarjetas de lotes) |
 | `components/LoteDetalle.tsx` | Pantalla de detalle de un lote |
 | `components/modales.tsx` | Formularios (lote, propietario, compromisos, registrar pago, generar plan) |

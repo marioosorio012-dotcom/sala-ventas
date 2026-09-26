@@ -412,3 +412,13 @@ tfoot td { font-weight: 600; border-top: 1px solid var(--border); border-bottom:
   .pay-table tfoot td { border: none; font-weight: 700; }
   .pay-table .td-vacia-movil { display: none; }
 }
+/* Círculo rojo en tarjetas de lotes con pagos retrasados */
+.fc-alerta {
+  display: inline-block;
+  width: 0.8em;
+  height: 0.8em;
+  margin: 0 0.2em 0 0.1em;
+  border-radius: 50%;
+  background: var(--danger);
+  vertical-align: -0.02em;
+}

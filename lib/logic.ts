@@ -181,3 +181,41 @@ export function normalizarNumero(v: unknown): number | null {
   const n = Number(s);
   return isFinite(n) ? n : null;
 }
+
+export type FilaCompromisoExcel = {
+  numero_lote: string;
+  fecha_programada: string | null;
+  valor_programado: number | null;
+  fecha_real: string | null;
+  valor_real: number | null;
+};
+
+/**
+ * Liga cada pago realizado con su compromiso: mismo número de lote y misma fecha
+ * programada (y, si hay dos compromisos con la misma fecha, el que tenga el mismo
+ * valor programado). Exportado para poder probarlo.
+ */
+export function ligarPagosRealizados(
+  compromisos: FilaCompromisoExcel[],
+  realizados: FilaCompromisoExcel[],
+): { pagos: FilaCompromisoExcel[]; sinCompromiso: number; ligados: number } {
+  const pagos = compromisos.map((c) => ({ ...c, fecha_real: null as string | null, valor_real: null as number | null }));
+  let sinCompromiso = 0;
+  let ligados = 0;
+  for (const r of realizados) {
+    const candidatos = pagos.filter(
+      (c) => c.fecha_real === null && c.numero_lote === r.numero_lote && c.fecha_programada === r.fecha_programada,
+    );
+    const elegido =
+      candidatos.find((c) => r.valor_programado !== null && c.valor_programado === r.valor_programado) ?? candidatos[0];
+    if (!elegido) {
+      sinCompromiso++;
+      continue;
+    }
+    elegido.fecha_real = r.fecha_real;
+    elegido.valor_real = r.valor_real;
+    ligados++;
+  }
+  return { pagos, sinCompromiso, ligados };
+}
+

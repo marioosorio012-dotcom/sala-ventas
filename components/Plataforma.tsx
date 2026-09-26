@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import { getSupabase, traerTodo } from '@/lib/supabase';
 import {
-  formatoPesos, hoyColombia, resumenGeneral,
+  estadoPago, formatoPesos, hoyColombia, resumenGeneral,
   type Compromiso, type CuotaPlan, type InfoPropietario, type Lote,
 } from '@/lib/logic';
 import { exportarExcel, leerExcel } from '@/lib/excel';
@@ -170,10 +170,14 @@ export function Plataforma({ session, rol, nombre }: { session: Session; rol: Ro
     const nombres = new Set(datos.lotes.map((l) => l.numero_lote));
     const pagosValidos = datos.pagos.filter((p) => nombres.has(p.numero_lote));
     const ignorados = datos.pagos.length - pagosValidos.length;
+    const realizados = pagosValidos.filter((p) => p.fecha_real).length;
     const ok = await confirmar({
       mensaje:
-        `Vas a importar ${datos.lotes.length} lote(s) y ${pagosValidos.length} pago(s).` +
-        (ignorados ? ` (${ignorados} pago(s) se ignorarán porque su lote no está en la hoja "Lotes".)` : '') +
+        `Vas a importar ${datos.lotes.length} lote(s), ${pagosValidos.length} compromiso(s) de pago y ${realizados} pago(s) realizado(s).` +
+        (ignorados ? ` ${ignorados} compromiso(s) se ignorarán porque su lote no está en la hoja "Lotes".` : '') +
+        (datos.realizadosSinCompromiso
+          ? ` ${datos.realizadosSinCompromiso} pago(s) realizado(s) se ignorarán porque no coinciden con ningún compromiso (mismo lote y fecha programada).`
+          : '') +
         ` Esto REEMPLAZARÁ toda la información actual de la plataforma (${lotes.length} lote(s) existentes). ¿Continuar?`,
       etiqueta: 'Reemplazar todo',
       peligro: true,
@@ -184,7 +188,7 @@ export function Plataforma({ session, rol, nombre }: { session: Session; rol: Ro
       if (error) throw errorLegible(error);
       irA('');
       await recargar();
-      toast(`Importados ${data?.lotes ?? datos.lotes.length} lote(s) y ${data?.pagos ?? pagosValidos.length} pago(s)`);
+      toast(`Importados ${data?.lotes ?? datos.lotes.length} lote(s) y ${data?.pagos ?? pagosValidos.length} compromiso(s) de pago`);
     } catch (e) {
       toast('Error durante la importación: ' + (e as Error).message);
     }
@@ -194,6 +198,14 @@ export function Plataforma({ session, rol, nombre }: { session: Session; rol: Ro
   const hoy = hoyColombia();
   const resumen = useMemo(() => resumenGeneral(infos, pagos, hoy), [infos, pagos, hoy]);
   const infoPorLote = useMemo(() => new Map(infos.map((i) => [i.lote_id, i])), [infos]);
+  // Lotes con al menos un compromiso en estado "Retrasado" → cuántos tiene cada uno
+  const retrasadosPorLote = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const p of pagos) {
+      if (estadoPago(p, hoy).label === 'Retrasado') m.set(p.lote_id, (m.get(p.lote_id) ?? 0) + 1);
+    }
+    return m;
+  }, [pagos, hoy]);
   const loteActivo = ruta.vista === 'lote' ? lotes.find((l) => l.id === ruta.id) : undefined;
   const filtro = busqueda.trim().toLowerCase();
   const lotesVisibles = filtro
@@ -325,7 +337,19 @@ export function Plataforma({ session, rol, nombre }: { session: Session; rol: Ro
                         >🗑️</button>
                       </div>
                     )}
-                    <div className="fc-name">📁 Lote {l.numero_lote}</div>
+                    <div className="fc-name">
+                      {retrasadosPorLote.has(l.id) ? (
+                        <span
+                          className="fc-alerta"
+                          role="img"
+                          aria-label={`${retrasadosPorLote.get(l.id)} pago(s) retrasado(s)`}
+                          title={`${retrasadosPorLote.get(l.id)} pago(s) retrasado(s)`}
+                        />
+                      ) : (
+                        '📁'
+                      )}{' '}
+                      Lote {l.numero_lote}
+                    </div>
                     <div className="fc-count">{info ? info.nombre_propietario || 'Con información' : 'Sin información'}</div>
                   </div>
                 );
